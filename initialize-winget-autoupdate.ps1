@@ -5,33 +5,46 @@
 .DESCRIPTION
     Intended to run as an Intune remediation script. The script:
       1. Logs the execution context (IsSystem / IsAdmin / user / session id).
-      2. Disables the "Winget-AutoUpdate" scheduled task if it exists and is enabled (admin only).
-      3. Locates winget-upgrade.ps1 in the first existing location (in priority order):
+      2. When admin and $MoveUserLogsToSystemLogDir is $true, appends the user-context logs from
+         $UserLogDir to $UserLogArchiveName in $SystemLogDir and deletes them.
+      3. Disables the $WauTaskName scheduled task if it exists and is enabled (admin only).
+      4. Locates winget-upgrade.ps1 in the first existing location of $UpgradeScriptCandidates:
            - C:\Program Files\Winget-AutoUpdate\Winget-Upgrade.ps1
            - C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\Winget-Upgrade.ps1
            - C:\ProgramData\Winget-AutoUpdate\winget-upgrade.ps1
-      4. Uses C:\ProgramData\Winget-AutoUpdate\Invisible.vbs, or $ToolsDir\Invisible.vbs if missing.
-         When admin, Invisible.vbs is downloaded from $InvisibleUrl into $ToolsDir; when not admin, an
-         existing copy (placed by an earlier SYSTEM run) must be present.
-      5. Starts winget-upgrade.ps1 invisibly via wscript.exe + Invisible.vbs (-EncodedCommand).
-      6. Polls for up to 60 seconds for an updates.log written after the script started.
+      5. Uses $WauInvisibleVbs (C:\ProgramData\Winget-AutoUpdate\Invisible.vbs), or $ToolsDir\Invisible.vbs
+         if missing. When admin, Invisible.vbs is downloaded from $InvisibleUrl into $ToolsDir; when not
+         admin, an existing copy (placed by an earlier SYSTEM run) must be present.
+      6. Starts winget-upgrade.ps1 invisibly via wscript.exe + Invisible.vbs (-EncodedCommand).
+      7. Polls $UpdateLogCandidates for up to $UpdateLogMaxWaitSeconds (60) seconds for an updates.log
+         written after the script started.
 
     Outputs "Compliant" (exit 0) when the run is confirmed; otherwise writes "Not Compliant" as a
     warning and exits 1.
 
-    Supports SYSTEM and user context. Steps that need admin rights (IME log folder, disabling the
-    scheduled task, downloading Invisible.vbs into $ToolsDir) are gated on $IsAdmin.
+    Supports SYSTEM and user context. Steps that need admin rights (IME log folder, moving user logs,
+    disabling the scheduled task, downloading Invisible.vbs into $ToolsDir) are gated on $IsAdmin.
 
-    Configuration: before deploying, fill out $ToolsDir and $InvisibleUrl in the
-    "Variables: Configuration" block at the top of the script.
+    Configuration: all settings are in the "Variables: Configuration" block at the top of the script.
+    Before deploying, fill out at least $ToolsDir and $InvisibleUrl.
 
 .NOTES
     Runs in SYSTEM context as an Intune Remediations script; also supports user context.
-    Logs to C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\initialize-winget-autoupdate.log
-    when admin, otherwise to C:\ProgramData\Logs\Software\initialize-winget-autoupdate.log.
+    Logs to $SystemLogDir\$LogFileName (C:\ProgramData\Microsoft\IntuneManagementExtension\Logs) when
+    admin, otherwise to $UserLogDir\$LogFileName (C:\ProgramData\Logs\Software).
 
-    Version:      1.1.5
+    Version:      1.2.0
     Release notes:
+      1.2.0 - Moved all settings into the "Variables: Configuration" block at the top of the script:
+              $SystemLogDir, $UserLogDir, $LogFileName, $LogMaxSizeBytes, $LogMaxFiles, $WauTaskName,
+              $UpgradeScriptCandidates, $WauInvisibleVbs, $UpdateLogCandidates, $UpdateLogMaxWaitSeconds
+              and $UpdateLogPollSeconds (renamed from $LogMaxWaitSeconds/$LogPollSeconds).
+            - Added $MoveUserLogsToSystemLogDir (default $true): when running as admin (SYSTEM), the user
+              logs in $UserLogDir (current + rotated, oldest first) are appended to $UserLogArchiveName
+              (initialize-winget-autoupdate-user.log) in $SystemLogDir and then deleted, so they are
+              collected with the Intune Management Extension logs. The archive is rotated like the main log.
+              Set to $false to leave the user logs in place.
+            - Invoke-LogRollover now takes the log path as a -Path parameter.
       1.1.5 - Added user-context support gated on $IsAdmin (Administrators SID S-1-5-32-544 enabled in
               the process token; a non-elevated/filtered token has it as deny-only and evaluates to $false):
             - Log file is written to the IME logs folder when admin, otherwise to
@@ -88,26 +101,55 @@
 # Helper for consistent timestamp output
 function Get-Now { (Get-Date).ToString('MM/dd/yyyy hh:mm:ss tt') }
 
-## Variables: Configuration - fill out before deploying
-# Local folder that Invisible.vbs is downloaded to when it is not present in C:\ProgramData\Winget-AutoUpdate
+## Variables: Configuration - fill out / review before deploying
+# Local folder that Invisible.vbs is downloaded to when it is not present in the WAU working directory
 $ToolsDir = "C:\Windows\Companyname\Tools"
 # Download source for Invisible.vbs (only used when running as admin)
 $InvisibleUrl = "https://storageaccount.blob.core.windows.net/config/Tools/Invisible.vbs"
+
+# Log folders: admin (SYSTEM) logs to $SystemLogDir, users log to $UserLogDir (users cannot write to the IME folder)
+$SystemLogDir = "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"
+$UserLogDir = "C:\ProgramData\Logs\Software"
+$LogFileName = "initialize-winget-autoupdate.log"
+$LogMaxSizeBytes = 1MB   # rotate when the log exceeds this size
+$LogMaxFiles = 3         # total number of log files to keep (current + rotated)
+
+# When running as admin (SYSTEM): append the user logs from $UserLogDir to $UserLogArchiveName in $SystemLogDir
+# and delete them, so they are collected with the Intune Management Extension logs. $false = leave user logs in place.
+$MoveUserLogsToSystemLogDir = $true
+$UserLogArchiveName = "initialize-winget-autoupdate-user.log"
+
+# Winget-AutoUpdate scheduled task that is disabled so WAU only runs through this script
+$WauTaskName = "Winget-AutoUpdate"
+# winget-upgrade.ps1 locations in priority order; the first existing one is run
+$UpgradeScriptCandidates = @(
+    "C:\Program Files\Winget-AutoUpdate\Winget-Upgrade.ps1",
+    "C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\Winget-Upgrade.ps1",
+    "C:\ProgramData\Winget-AutoUpdate\winget-upgrade.ps1"
+)
+# Invisible.vbs in the WAU working directory; $ToolsDir\Invisible.vbs is used when this is missing
+$WauInvisibleVbs = "C:\ProgramData\Winget-AutoUpdate\Invisible.vbs"
+# WAU updates.log locations checked to confirm that winget-upgrade.ps1 ran
+$UpdateLogCandidates = @(
+    "C:\Program Files\Winget-AutoUpdate\logs\updates.log",
+    "C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\logs\updates.log",
+    "C:\ProgramData\Winget-AutoUpdate\logs\updates.log"
+)
+$UpdateLogMaxWaitSeconds = 60   # how long to wait for updates.log after launch
+$UpdateLogPollSeconds = 5       # how often to check updates.log
 
 ## Variables: Permissions/Accounts
 [Security.Principal.WindowsIdentity]$CurrentProcessToken = [Security.Principal.WindowsIdentity]::GetCurrent()
 [Boolean]$IsAdmin = [Boolean]($CurrentProcessToken.Groups -contains [Security.Principal.SecurityIdentifier]'S-1-5-32-544')
 
-# Log file setup: IME logs folder when admin, otherwise C:\ProgramData\Logs\Software (users cannot write to the IME folder)
+# Log file setup
 if ($IsAdmin) {
-    $LogDir = "C:\ProgramData\Microsoft\IntuneManagementExtension\Logs"
+    $LogDir = $SystemLogDir
 }
 else {
-    $LogDir = "C:\ProgramData\Logs\Software"
+    $LogDir = $UserLogDir
 }
-$LogFile = Join-Path $LogDir "initialize-winget-autoupdate.log"
-$LogMaxSizeBytes = 1MB   # rotate when the log exceeds this size
-$LogMaxFiles = 3         # total number of log files to keep (current + rotated)
+$LogFile = Join-Path $LogDir $LogFileName
 if (-not (Test-Path $LogDir)) {
     try {
         New-Item -Path $LogDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
@@ -117,21 +159,22 @@ if (-not (Test-Path $LogDir)) {
     }
 }
 
-# Rotates the log when it exceeds the max size, keeping at most $LogMaxFiles files
+# Rotates a log when it exceeds the max size, keeping at most $LogMaxFiles files
 function Invoke-LogRollover {
-    if (-not (Test-Path $LogFile)) { return }
-    if ((Get-Item $LogFile).Length -lt $LogMaxSizeBytes) { return }
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    if ((Get-Item $Path).Length -lt $LogMaxSizeBytes) { return }
 
     # Remove the oldest allowed file, then shift the rest up by one index
-    $oldest = "$LogFile.$($LogMaxFiles - 1)"
+    $oldest = "$Path.$($LogMaxFiles - 1)"
     if (Test-Path $oldest) { Remove-Item $oldest -Force -ErrorAction SilentlyContinue }
     for ($i = $LogMaxFiles - 2; $i -ge 1; $i--) {
-        $src = "$LogFile.$i"
-        if (Test-Path $src) { Move-Item $src "$LogFile.$($i + 1)" -Force -ErrorAction SilentlyContinue }
+        $src = "$Path.$i"
+        if (Test-Path $src) { Move-Item $src "$Path.$($i + 1)" -Force -ErrorAction SilentlyContinue }
     }
-    Move-Item $LogFile "$LogFile.1" -Force -ErrorAction SilentlyContinue
+    Move-Item $Path "$Path.1" -Force -ErrorAction SilentlyContinue
 }
-Invoke-LogRollover
+Invoke-LogRollover -Path $LogFile
 
 # Writes to host (keeping existing behaviour) and appends to the log file
 function Write-Log {
@@ -155,7 +198,7 @@ function Write-Log {
     }
 }
 
-Write-Log "initialize-winget-autoupdate - VERSION 1.1.5"
+Write-Log "initialize-winget-autoupdate - VERSION 1.2.0"
 
 $ScriptStart = Get-Date
 Write-Log "IsSystem: $($CurrentProcessToken.IsSystem)"
@@ -163,8 +206,40 @@ Write-Log "IsAdmin: $IsAdmin"
 Write-Log "User: $($CurrentProcessToken.Name)"
 Write-Log "SessionID: $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
 
+if ($IsAdmin) {
+    if ($MoveUserLogsToSystemLogDir) {
+        Write-Log "Moving user logs from $UserLogDir to $SystemLogDir"
+        $UserLogFile = Join-Path $UserLogDir $LogFileName
+        $UserLogArchive = Join-Path $SystemLogDir $UserLogArchiveName
+        # Oldest rotated file first so the archive stays in chronological order
+        $UserLogs = @((@(for ($i = $LogMaxFiles - 1; $i -ge 1; $i--) { "$UserLogFile.$i" }) + $UserLogFile) | Where-Object { Test-Path $_ })
+        if ($UserLogs.Count -gt 0) {
+            Invoke-LogRollover -Path $UserLogArchive
+            foreach ($UserLog in $UserLogs) {
+                try {
+                    $Content = Get-Content -Path $UserLog -Raw -ErrorAction Stop
+                    if ($Content) {
+                        $Content | Out-File -FilePath $UserLogArchive -Append -Encoding UTF8 -NoNewline -ErrorAction Stop
+                    }
+                    Remove-Item -Path $UserLog -Force -ErrorAction Stop
+                    Write-Log "Moved user log $UserLog to $UserLogArchive"
+                }
+                catch {
+                    Write-Log "Failed to move user log $UserLog : $($_.Exception.Message)" -Level WARN
+                }
+            }
+        }
+        else {
+            Write-Log "No user logs found in $UserLogDir"
+        }
+    }
+    else {
+        Write-Log "Moving user logs is disabled (MoveUserLogsToSystemLogDir = false)"
+    }
+}
+
 Write-Log "Check for task Scheduled"
-$Task = Get-ScheduledTask -TaskName "Winget-AutoUpdate" -ErrorAction SilentlyContinue
+$Task = Get-ScheduledTask -TaskName $WauTaskName -ErrorAction SilentlyContinue
 if ($Task) {
     Write-Log "Task Scheduled found"
     if ($Task.State -ne "Disabled") {
@@ -190,11 +265,6 @@ else {
 }
 
 Write-Log "Checking for winget-upgrade.ps1"
-$UpgradeScriptCandidates = @(
-    "C:\Program Files\Winget-AutoUpdate\Winget-Upgrade.ps1",
-    "C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\Winget-Upgrade.ps1",
-    "C:\ProgramData\Winget-AutoUpdate\winget-upgrade.ps1"
-)
 $UpgradeScript = $null
 foreach ($Candidate in $UpgradeScriptCandidates) {
     if (Test-Path $Candidate) {
@@ -213,7 +283,7 @@ if (-not $UpgradeScript) {
 Write-Log "winget-upgrade.ps1 found: $UpgradeScript"
 
 Write-Log "Checking for Invisible.vbs"
-$InvisibleVbs = "C:\ProgramData\Winget-AutoUpdate\Invisible.vbs"
+$InvisibleVbs = $WauInvisibleVbs
 if (-not (Test-Path $InvisibleVbs)) {
     $InvisibleVbs = Join-Path $ToolsDir "Invisible.vbs"
     if ($IsAdmin) {
@@ -260,13 +330,6 @@ try {
 
     # Verify winget-upgrade.ps1 actually ran by confirming an updates.log was written by THIS run.
     # The launch is async, so poll for a short while to let the hidden run create/update the log.
-    $UpdateLogCandidates = @(
-        "C:\Program Files\Winget-AutoUpdate\logs\updates.log",
-        "C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\logs\updates.log",
-        "C:\ProgramData\Winget-AutoUpdate\logs\updates.log"
-    )
-    $LogMaxWaitSeconds = 60
-    $LogPollSeconds = 5
     $LogUpdated = $false
     $Elapsed = 0
     do {
@@ -286,11 +349,11 @@ try {
                 Write-Log "updates.log not found: $LogPath"
             }
         }
-        if (-not $LogUpdated -and $Elapsed -lt $LogMaxWaitSeconds) {
-            Start-Sleep -Seconds $LogPollSeconds
-            $Elapsed += $LogPollSeconds
+        if (-not $LogUpdated -and $Elapsed -lt $UpdateLogMaxWaitSeconds) {
+            Start-Sleep -Seconds $UpdateLogPollSeconds
+            $Elapsed += $UpdateLogPollSeconds
         }
-    } while (-not $LogUpdated -and $Elapsed -lt $LogMaxWaitSeconds)
+    } while (-not $LogUpdated -and $Elapsed -lt $UpdateLogMaxWaitSeconds)
 
     if (-not $LogUpdated) {
         Write-Log "Not Compliant - no updates.log was written after start" -Level WARN
