@@ -29,73 +29,80 @@
     Before deploying, fill out at least $ToolsDir and $InvisibleUrl.
 
 .NOTES
+    Maintained by: KSKITDK
+    Version      : 1.2.1
+
     Runs in SYSTEM context as an Intune Remediations script; also supports user context.
     Logs to $SystemLogDir\$LogFileName (C:\ProgramData\Microsoft\IntuneManagementExtension\Logs) when
     admin, otherwise to $UserLogDir\$LogFileName (C:\ProgramData\Logs\Software).
 
-    Version:      1.2.0
-    Release notes:
-      1.2.0 - Moved all settings into the "Variables: Configuration" block at the top of the script:
-              $SystemLogDir, $UserLogDir, $LogFileName, $LogMaxSizeBytes, $LogMaxFiles, $WauTaskName,
-              $UpgradeScriptCandidates, $WauInvisibleVbs, $UpdateLogCandidates, $UpdateLogMaxWaitSeconds
-              and $UpdateLogPollSeconds (renamed from $LogMaxWaitSeconds/$LogPollSeconds).
-            - Added $MoveUserLogsToSystemLogDir (default $true): when running as admin (SYSTEM), the user
-              logs in $UserLogDir (current + rotated, oldest first) are appended to $UserLogArchiveName
-              (initialize-winget-autoupdate-user.log) in $SystemLogDir and then deleted, so they are
-              collected with the Intune Management Extension logs. The archive is rotated like the main log.
-              Set to $false to leave the user logs in place.
-            - Invoke-LogRollover now takes the log path as a -Path parameter.
-      1.1.5 - Added user-context support gated on $IsAdmin (Administrators SID S-1-5-32-544 enabled in
-              the process token; a non-elevated/filtered token has it as deny-only and evaluates to $false):
-            - Log file is written to the IME logs folder when admin, otherwise to
-              C:\ProgramData\Logs\Software. Failure to create the log folder no longer stops the script.
-            - Disabling the Winget-AutoUpdate task is skipped when not admin; "disabled" is only logged
-              when Disable-ScheduledTask actually succeeded.
-            - Invisible.vbs: when not admin, an existing $ToolsDir\Invisible.vbs is used
-              instead of downloading; Not Compliant (1) if none exists.
-            - Fixed false Compliant: Write-Log no longer throws when the log file cannot be written.
-              Previously an Out-File failure inside try/catch skipped the "Exit 1" in the catch block, so
-              the script ended with exit 0 without launching winget-upgrade.ps1.
-            - Creating the Tools folder and downloading Invisible.vbs now stop on failure instead of
-              logging success.
-            - Startup banner shows the correct version and logs IsAdmin and the running user.
-            - Moved the local Tools folder ($ToolsDir) and the Invisible.vbs download URL ($InvisibleUrl)
-              into a "Variables: Configuration" block at the top of the script so they are easy to fill
-              out, and restored the step-by-step .DESCRIPTION.
-      1.1.4 - Converted the help header to valid comment-based help keywords: moved version and release
-              notes from the invalid .VERSION/.RELEASENOTES keywords into .NOTES so Get-Help works.
-      1.1.3 - Changed the post-launch updates.log verification from a same-day match to a strict
-              "written at or after script start" comparison ($LastWrite -ge $ScriptStart). The same-day
-              rule produced false positives by matching a pre-existing updates.log from an earlier run on
-              the same day; the strict check confirms the log was written by the current run.
-      1.1.2 - Added post-launch verification that winget-upgrade.ps1 actually ran: polls (up to 60s) the
-              updates.log in priority order: 1) C:\Program Files\Winget-AutoUpdate\logs\updates.log,
-              2) C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\logs\updates.log,
-              3) C:\ProgramData\Winget-AutoUpdate\logs\updates.log. Compliant if at least one existing
-              log has today's date; otherwise Not Compliant (1).
-      1.1.1 - Fixed hidden launch failing when the winget-upgrade.ps1 path contains spaces
-              (e.g. C:\Program Files\Winget-Autoupdate-aaS\...): switched the wscript/Invisible.vbs launch
-              from -File "" ... "" to -EncodedCommand (Base64 of the UTF-16LE script call). The doubled-quote
-              -File form was silently dropped by wscript for spaced paths, so the script never started.
-      1.1.0 - Added a Test-Path check for winget-upgrade.ps1 before starting it; exits Not Compliant (1)
-              if missing.
-            - Added prioritized lookup for winget-upgrade.ps1; only the first existing script is run.
-              Priority: 1) C:\Program Files\Winget-AutoUpdate\Winget-Upgrade.ps1,
-              2) C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\Winget-Upgrade.ps1,
-              3) $WorkingDir\winget-upgrade.ps1.
-            - Added Invisible.vbs presence check: if not found in the working directory it is downloaded
-              from $InvisibleUrl into $ToolsDir (created if missing) and used for the launch.
-            - Replaced the $WorkingDir variable with the literal path C:\ProgramData\Winget-AutoUpdate in
-              the active code paths (upgrade-script candidate and Invisible.vbs lookup).
-            - Added per-candidate Write-Host output during the winget-upgrade.ps1 lookup.
-            - Added file logging via a Write-Log helper: Write-Host/Write-Warning messages are also appended
-              (with timestamp and level) to the IME log folder.
-            - Added log rollover at 1 MB, keeping at most 3 files (.log, .1, .2); oldest is discarded.
-            - Moved the log setup/Write-Log helper to the top so the startup banner, IsSystem and
-              SessionID lines are also logged.
-            - Fixed the wscript/Invisible.vbs launch: the entire PowerShell invocation is now passed as ONE
-              quoted argument, since Invisible.vbs runs WScript.Arguments(0) as the full command line.
-      1.0.0 - Initial versioned release.
+    Release notes
+    1.2.1  - Version history moved under .NOTES (standard header layout).
+           - Added Maintained by and a .LINK to the GitHub repository.
+    1.2.0  - Moved all settings into the "Variables: Configuration" block at the top of the script:
+             $SystemLogDir, $UserLogDir, $LogFileName, $LogMaxSizeBytes, $LogMaxFiles, $WauTaskName,
+             $UpgradeScriptCandidates, $WauInvisibleVbs, $UpdateLogCandidates, $UpdateLogMaxWaitSeconds
+             and $UpdateLogPollSeconds (renamed from $LogMaxWaitSeconds/$LogPollSeconds).
+           - Added $MoveUserLogsToSystemLogDir (default $true): when running as admin (SYSTEM), the user
+             logs in $UserLogDir (current + rotated, oldest first) are appended to $UserLogArchiveName
+             (initialize-winget-autoupdate-user.log) in $SystemLogDir and then deleted, so they are
+             collected with the Intune Management Extension logs. The archive is rotated like the main log.
+             Set to $false to leave the user logs in place.
+           - Invoke-LogRollover now takes the log path as a -Path parameter.
+    1.1.5  - Added user-context support gated on $IsAdmin (Administrators SID S-1-5-32-544 enabled in
+             the process token; a non-elevated/filtered token has it as deny-only and evaluates to $false):
+           - Log file is written to the IME logs folder when admin, otherwise to
+             C:\ProgramData\Logs\Software. Failure to create the log folder no longer stops the script.
+           - Disabling the Winget-AutoUpdate task is skipped when not admin; "disabled" is only logged
+             when Disable-ScheduledTask actually succeeded.
+           - Invisible.vbs: when not admin, an existing $ToolsDir\Invisible.vbs is used
+             instead of downloading; Not Compliant (1) if none exists.
+           - Fixed false Compliant: Write-Log no longer throws when the log file cannot be written.
+             Previously an Out-File failure inside try/catch skipped the "Exit 1" in the catch block, so
+             the script ended with exit 0 without launching winget-upgrade.ps1.
+           - Creating the Tools folder and downloading Invisible.vbs now stop on failure instead of
+             logging success.
+           - Startup banner shows the correct version and logs IsAdmin and the running user.
+           - Moved the local Tools folder ($ToolsDir) and the Invisible.vbs download URL ($InvisibleUrl)
+             into a "Variables: Configuration" block at the top of the script so they are easy to fill
+             out, and restored the step-by-step .DESCRIPTION.
+    1.1.4  - Converted the help header to valid comment-based help keywords: moved version and release
+             notes from the invalid .VERSION/.RELEASENOTES keywords into .NOTES so Get-Help works.
+    1.1.3  - Changed the post-launch updates.log verification from a same-day match to a strict
+             "written at or after script start" comparison ($LastWrite -ge $ScriptStart). The same-day
+             rule produced false positives by matching a pre-existing updates.log from an earlier run on
+             the same day; the strict check confirms the log was written by the current run.
+    1.1.2  - Added post-launch verification that winget-upgrade.ps1 actually ran: polls (up to 60s) the
+             updates.log in priority order: 1) C:\Program Files\Winget-AutoUpdate\logs\updates.log,
+             2) C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\logs\updates.log,
+             3) C:\ProgramData\Winget-AutoUpdate\logs\updates.log. Compliant if at least one existing
+             log has today's date; otherwise Not Compliant (1).
+    1.1.1  - Fixed hidden launch failing when the winget-upgrade.ps1 path contains spaces
+             (e.g. C:\Program Files\Winget-Autoupdate-aaS\...): switched the wscript/Invisible.vbs launch
+             from -File "" ... "" to -EncodedCommand (Base64 of the UTF-16LE script call). The doubled-quote
+             -File form was silently dropped by wscript for spaced paths, so the script never started.
+    1.1.0  - Added a Test-Path check for winget-upgrade.ps1 before starting it; exits Not Compliant (1)
+             if missing.
+           - Added prioritized lookup for winget-upgrade.ps1; only the first existing script is run.
+             Priority: 1) C:\Program Files\Winget-AutoUpdate\Winget-Upgrade.ps1,
+             2) C:\Program Files\Winget-Autoupdate-aaS\Winget-AutoUpdate\Winget-Upgrade.ps1,
+             3) $WorkingDir\winget-upgrade.ps1.
+           - Added Invisible.vbs presence check: if not found in the working directory it is downloaded
+             from $InvisibleUrl into $ToolsDir (created if missing) and used for the launch.
+           - Replaced the $WorkingDir variable with the literal path C:\ProgramData\Winget-AutoUpdate in
+             the active code paths (upgrade-script candidate and Invisible.vbs lookup).
+           - Added per-candidate Write-Host output during the winget-upgrade.ps1 lookup.
+           - Added file logging via a Write-Log helper: Write-Host/Write-Warning messages are also appended
+             (with timestamp and level) to the IME log folder.
+           - Added log rollover at 1 MB, keeping at most 3 files (.log, .1, .2); oldest is discarded.
+           - Moved the log setup/Write-Log helper to the top so the startup banner, IsSystem and
+             SessionID lines are also logged.
+           - Fixed the wscript/Invisible.vbs launch: the entire PowerShell invocation is now passed as ONE
+             quoted argument, since Invisible.vbs runs WScript.Arguments(0) as the full command line.
+    1.0.0  - Initial versioned release.
+
+.LINK
+    https://github.com/ksk-itdk/initialize-winget-autoupdate
 #>
 
 # Helper for consistent timestamp output
@@ -198,7 +205,7 @@ function Write-Log {
     }
 }
 
-Write-Log "initialize-winget-autoupdate - VERSION 1.2.0"
+Write-Log "initialize-winget-autoupdate - VERSION 1.2.1"
 
 $ScriptStart = Get-Date
 Write-Log "IsSystem: $($CurrentProcessToken.IsSystem)"
